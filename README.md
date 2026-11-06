@@ -1,5 +1,5 @@
 # AmneziaWG LegacyAndroid Port
-### Оригинал: [AmneziaWG](https://amnezia.org/learn-more/31_amneziawg)
+> Оригинал: [AmneziaWG](https://amnezia.org/learn-more/31_amneziawg)
 
 [?]
 
