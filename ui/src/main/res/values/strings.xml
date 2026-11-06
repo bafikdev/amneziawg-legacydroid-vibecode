@@ -207,10 +207,6 @@
     <string name="private_key">Private key</string>
     <string name="public_key">Public key</string>
     <string name="qr_code_hint">Tip: generate with `qrencode -t ansiutf8 &lt; tunnel.conf`.</string>
-    <string name="quick_settings_tile_add_title">Add tile to quick settings panel</string>
-    <string name="quick_settings_tile_add_summary">The shortcut tile toggles the most recent tunnel</string>
-    <string name="quick_settings_tile_add_failure">Unable to add shortcut tile: error %d</string>
-    <string name="quick_settings_tile_action">Toggle tunnel</string>
     <string name="restore_on_boot_summary_off">Will not bring up enabled tunnels at boot</string>
     <string name="restore_on_boot_summary_on">Will bring up enabled tunnels at boot</string>
     <string name="restore_on_boot_title">Restore on boot</string>
@@ -272,4 +268,8 @@
     <string name="import_disclaimer">Ensure that you obtained the configuration file from a trusted source.\n\nOfficial Amnezia services are available only at <a href="https://amnezia.org">amnezia.org</a>\n</string>
     <string name="tunnel_status_connected">Connected</string>
     <string name="tunnel_status_connecting">Connecting…</string>
+    <string name="tunnel_status_title">Tunnel status</string>
+    <string name="tunnel_status_up">Up</string>
+    <string name="tunnel_status_down">Down</string>
+    <string name="tunnel_status_none">No tunnels</string>
 </resources>

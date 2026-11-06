@@ -14,7 +14,6 @@ import androidx.lifecycle.lifecycleScope
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
 import org.amnezia.awg.Application
-import org.amnezia.awg.QuickTileService
 import org.amnezia.awg.R
 import org.amnezia.awg.backend.AwgQuickBackend
 import org.amnezia.awg.preference.PreferencesPreferenceDataStore
@@ -53,11 +52,8 @@ class SettingsActivity : AppCompatActivity() {
             addPreferencesFromResource(R.xml.preferences)
             preferenceScreen.initialExpandedChildrenCount = 5
 
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || QuickTileService.isAdded) {
-                val quickTile = preferenceManager.findPreference<Preference>("quick_tile")
-                quickTile?.parent?.removePreference(quickTile)
-                --preferenceScreen.initialExpandedChildrenCount
-            }
+            // Quick Settings Tile исключён из скоупа порта: вместо него в настройках показывается
+            // пассивный индикатор состояния туннеля (TunnelStatusPreference), управление — только из UI.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val darkTheme = preferenceManager.findPreference<Preference>("dark_theme")
                 darkTheme?.parent?.removePreference(darkTheme)

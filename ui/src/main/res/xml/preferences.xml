@@ -12,7 +12,11 @@
         android:summaryOn="@string/restore_on_boot_summary_on"
         android:title="@string/restore_on_boot_title" />
     <org.amnezia.awg.preference.ZipExporterPreference android:key="zip_exporter" />
-    <org.amnezia.awg.preference.QuickTilePreference android:key="quick_tile" />
+    <!-- Quick Settings Tile исключён из скоупа порта (API 24+, по решению — не восстанавливаем).
+         Вместо него — пассивный индикатор состояния туннеля; управление только из UI приложения. -->
+    <org.amnezia.awg.preference.TunnelStatusPreference
+        android:key="tunnel_status"
+        android:title="@string/tunnel_status_title" />
     <Preference
         android:key="log_viewer"
         android:singleLineTitle="false"
