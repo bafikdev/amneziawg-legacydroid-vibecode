@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ~ Copyright © 2017-2023 WireGuard LLC. All Rights Reserved.
+  ~ SPDX-License-Identifier: Apache-2.0
+  -->
+
+<resources>
+    <!-- Тексты постоянного foreground-уведомления VPN-сервиса (GoBackend.VpnService).
+         По скоупу порта Quick Settings Tile исключён, вместо него — пассивное уведомление
+         без action-кнопок; управление туннелем только из UI приложения. -->
+    <string name="tunnel_status_notification_channel">Tunnel status</string>
+    <string name="tunnel_status_connecting">Connecting…</string>
+    <string name="tunnel_status_connected">Connected</string>
+    <string name="tunnel_status_down">Disconnected</string>
+</resources>
