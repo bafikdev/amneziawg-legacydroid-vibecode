@@ -5,13 +5,19 @@
 
 package org.amnezia.awg.backend;
 
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ApplicationInfo;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
 import android.system.OsConstants;
 import android.util.Log;
 
+import org.amnezia.awg.R;
 import org.amnezia.awg.backend.BackendException.Reason;
 import org.amnezia.awg.backend.Tunnel.State;
 import org.amnezia.awg.util.SharedLibraryLoader;
@@ -53,6 +59,7 @@ public final class GoBackend implements Backend {
     private int currentTunnelHandle = -1;
     @Nullable private Thread statusThread;
     @Nullable private StatusCallback statusCallback;
+    @Nullable private VpnService currentVpnService;
 
     /**
      * Public constructor for GoBackend.
@@ -219,6 +226,7 @@ public final class GoBackend implements Backend {
     private void launchStatusJob() {
         stopStatusJob();
         Log.d(TAG, "Launch status job");
+        updateVpnNotification(context.getString(R.string.tunnel_status_connecting));
         statusThread = new Thread(() -> {
             while (!Thread.currentThread().isInterrupted()) {
                 final long lastHandshake = getLastHandshake(currentTunnel);
@@ -247,6 +255,7 @@ public final class GoBackend implements Backend {
                     if (statusCallback != null) {
                         statusCallback.onStatusChanged(true);
                     }
+                    updateVpnNotification(context.getString(R.string.tunnel_status_connected));
                     break;
                 }
 
@@ -270,6 +279,24 @@ public final class GoBackend implements Backend {
         if (statusThread != null) {
             statusThread.interrupt();
             statusThread = null;
+        }
+    }
+
+    /**
+     * Обновить текст постоянного foreground-уведомления VPN-сервиса.
+     * Уведомление не содержит action-кнопок: управление туннелем — только из UI приложения.
+     */
+    private void updateVpnNotification(@Nullable final String text) {
+        final VpnService service = currentVpnService;
+        if (service == null)
+            return;
+        try {
+            if (text == null)
+                service.stopForeground(true);
+            else
+                service.startForeground(VpnService.NOTIFICATION_ID, service.buildNotification(text));
+        } catch (final Exception e) {
+            Log.w(TAG, "Unable to update VPN notification", e);
         }
     }
 
