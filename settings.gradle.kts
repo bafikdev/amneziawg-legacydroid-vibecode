@@ -29,7 +29,8 @@ include(":ui")
 configure<SettingsExtension> {
     buildToolsVersion = "36.0.0"
     compileSdk = 36
-    // Порт под Android 4.4.4+ (KitKat, API 19) — Sony Xperia ZR / armeabi-v7a
+    // Порт под Android 4.4.4+ (KitKat, API 19) — Sony Xperia ZR / armeabi-v7a.
+    // NDK r26+ removed the API-19 sysroot; r25c is the last NDK that can target KitKat.
     minSdk = 19
-    ndkVersion = "26.1.10909125"
+    ndkVersion = "25.2.9519653"
 }
