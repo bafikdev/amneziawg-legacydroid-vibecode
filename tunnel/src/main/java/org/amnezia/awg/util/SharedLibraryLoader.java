@@ -36,10 +36,20 @@ public final class SharedLibraryLoader {
         final Collection<String> apks = new HashSet<>();
         if (context.getApplicationInfo().sourceDir != null)
             apks.add(context.getApplicationInfo().sourceDir);
-        if (context.getApplicationInfo().splitSourceDirs != null)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP &&
+                context.getApplicationInfo().splitSourceDirs != null)
             apks.addAll(Arrays.asList(context.getApplicationInfo().splitSourceDirs));
 
-        for (final String abi : Build.SUPPORTED_ABIS) {
+        final String[] supportedAbis;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            supportedAbis = Build.SUPPORTED_ABIS;
+        } else {
+            @SuppressWarnings("deprecation")
+            final String legacyAbi = Build.CPU_ABI;
+            supportedAbis = new String[]{legacyAbi != null ? legacyAbi : "armeabi-v7a"};
+        }
+
+        for (final String abi : supportedAbis) {
             for (final String apk : apks) {
                 try (final ZipFile zipFile = new ZipFile(new File(apk), ZipFile.OPEN_READ)) {
                     final String mappedLibName = System.mapLibraryName(libName);
@@ -75,7 +85,13 @@ public final class SharedLibraryLoader {
         }
         File f = null;
         try {
-            f = File.createTempFile("lib", ".so", context.getCodeCacheDir());
+            // Context.getCodeCacheDir() was added in API 21; use the ordinary cache dir on
+            // KitKat. The primary System.loadLibrary() path above is normally used on API 19
+            // because the APK is packaged with extractNativeLibs=true.
+            final File extractionDir = Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP
+                    ? context.getCodeCacheDir()
+                    : context.getCacheDir();
+            f = File.createTempFile("lib", ".so", extractionDir);
             if (extractLibrary(context, libName, f)) {
                 System.load(f.getAbsolutePath());
                 return;

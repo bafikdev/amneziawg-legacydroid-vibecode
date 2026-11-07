@@ -11,13 +11,11 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
-import android.content.pm.ApplicationInfo;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
-import android.system.OsConstants;
 import android.util.Log;
 
-import org.amnezia.awg.R;
+import org.amnezia.awg.tunnel.R;
 import org.amnezia.awg.backend.BackendException.Reason;
 import org.amnezia.awg.backend.Tunnel.State;
 import org.amnezia.awg.util.SharedLibraryLoader;
@@ -285,6 +283,10 @@ public final class GoBackend implements Backend {
     /**
      * Обновить текст постоянного foreground-уведомления VPN-сервиса.
      * Уведомление не содержит action-кнопок: управление туннелем — только из UI приложения.
+     *
+     * <p>На Android 4.4 (API 19) используется обычный {@link Notification.Builder} без канала:
+     * каналы уведомлений появились только в API 26. На API 21+ добавляется категория службы,
+     * а на API 26+ — низкоприоритетный канал, чтобы постоянное уведомление не было навязчивым.</p>
      */
     private void updateVpnNotification(@Nullable final String text) {
         final VpnService service = currentVpnService;
@@ -296,6 +298,8 @@ public final class GoBackend implements Backend {
             else
                 service.startForeground(VpnService.NOTIFICATION_ID, service.buildNotification(text));
         } catch (final Exception e) {
+            // На некоторых прошивках startForeground может быть запрещён политикой ОС.
+            // Это не должно ломать сам туннель.
             Log.w(TAG, "Unable to update VPN notification", e);
         }
     }
@@ -371,95 +375,137 @@ public final class GoBackend implements Backend {
                 throw be;
             }
             service.setOwner(this);
+            currentVpnService = service;
 
             if (currentTunnelHandle != -1) {
                 Log.w(TAG, "Tunnel already up");
+                updateVpnNotification(context.getString(R.string.tunnel_status_connected));
                 return;
             }
 
+            // Foreground-сервис обязан показать уведомление сразу после запуска. Пока идёт
+            // разрешение DNS и создание TUN, показываем "Connecting…"; после handshake
+            // статус-поток заменит текст на "Connected".
+            updateVpnNotification(context.getString(R.string.tunnel_status_connecting));
 
-            dnsRetry: for (int i = 0; i < DNS_RESOLUTION_RETRIES; ++i) {
-                // Pre-resolve IPs so they're cached when building the userspace string
+            try {
+                dnsRetry: for (int i = 0; i < DNS_RESOLUTION_RETRIES; ++i) {
+                    // Pre-resolve IPs so they're cached when building the userspace string
+                    for (final Peer peer : config.getPeers()) {
+                        final InetEndpoint ep = peer.getEndpoint().orElse(null);
+                        if (ep == null)
+                            continue;
+                        if (ep.getResolved().orElse(null) == null) {
+                            if (i < DNS_RESOLUTION_RETRIES - 1) {
+                                Log.w(TAG, "DNS host \"" + ep.getHost() + "\" failed to resolve; trying again");
+                                Thread.sleep(1000);
+                                continue dnsRetry;
+                            } else
+                                throw new BackendException(Reason.DNS_RESOLUTION_FAILURE, ep.getHost());
+                        }
+                    }
+                    break;
+                }
+
+                // Build config
+                final String goConfig = config.toAwgUserspaceString();
+
+                // Create the vpn tunnel with android API
+                final VpnService.Builder builder = service.getBuilder();
+                builder.setSession(tunnel.getName());
+
+                // Per-app VPN, search domains, allowFamily and setBlocking were added in API 21.
+                // On Android 4.4 we simply skip these optional features instead of crashing with
+                // NoSuchMethodError.
+                final boolean supportsLollipopVpnBuilder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP;
+                if (supportsLollipopVpnBuilder) {
+                    for (final String excludedApplication : config.getInterface().getExcludedApplications())
+                        builder.addDisallowedApplication(excludedApplication);
+
+                    for (final String includedApplication : config.getInterface().getIncludedApplications())
+                        builder.addAllowedApplication(includedApplication);
+                } else if (!config.getInterface().getExcludedApplications().isEmpty() ||
+                        !config.getInterface().getIncludedApplications().isEmpty()) {
+                    Log.w(TAG, "Per-application VPN is not supported on API " + Build.VERSION.SDK_INT + "; ignoring app lists");
+                }
+
+                for (final InetNetwork addr : config.getInterface().getAddresses())
+                    builder.addAddress(addr.getAddress(), addr.getMask());
+
+                for (final InetAddress addr : config.getInterface().getDnsServers())
+                    builder.addDnsServer(addr.getHostAddress());
+
+                if (supportsLollipopVpnBuilder) {
+                    for (final String dnsSearchDomain : config.getInterface().getDnsSearchDomains())
+                        builder.addSearchDomain(dnsSearchDomain);
+                } else if (!config.getInterface().getDnsSearchDomains().isEmpty()) {
+                    Log.w(TAG, "DNS search domains are not supported on API " + Build.VERSION.SDK_INT);
+                }
+
+                boolean sawDefaultRoute = false;
                 for (final Peer peer : config.getPeers()) {
-                    final InetEndpoint ep = peer.getEndpoint().orElse(null);
-                    if (ep == null)
-                        continue;
-                    if (ep.getResolved().orElse(null) == null) {
-                        if (i < DNS_RESOLUTION_RETRIES - 1) {
-                            Log.w(TAG, "DNS host \"" + ep.getHost() + "\" failed to resolve; trying again");
-                            Thread.sleep(1000);
-                            continue dnsRetry;
-                        } else
-                            throw new BackendException(Reason.DNS_RESOLUTION_FAILURE, ep.getHost());
+                    for (final InetNetwork addr : peer.getAllowedIps()) {
+                        if (addr.getMask() == 0)
+                            sawDefaultRoute = true;
+                        builder.addRoute(addr.getAddress(), addr.getMask());
                     }
                 }
-                break;
-            }
 
-            // Build config
-            final String goConfig = config.toAwgUserspaceString();
-
-            // Create the vpn tunnel with android API
-            final VpnService.Builder builder = service.getBuilder();
-            builder.setSession(tunnel.getName());
-
-            for (final String excludedApplication : config.getInterface().getExcludedApplications())
-                builder.addDisallowedApplication(excludedApplication);
-
-            for (final String includedApplication : config.getInterface().getIncludedApplications())
-                builder.addAllowedApplication(includedApplication);
-
-            for (final InetNetwork addr : config.getInterface().getAddresses())
-                builder.addAddress(addr.getAddress(), addr.getMask());
-
-            for (final InetAddress addr : config.getInterface().getDnsServers())
-                builder.addDnsServer(addr.getHostAddress());
-
-            for (final String dnsSearchDomain : config.getInterface().getDnsSearchDomains())
-                builder.addSearchDomain(dnsSearchDomain);
-
-            boolean sawDefaultRoute = false;
-            for (final Peer peer : config.getPeers()) {
-                for (final InetNetwork addr : peer.getAllowedIps()) {
-                    if (addr.getMask() == 0)
-                        sawDefaultRoute = true;
-                    builder.addRoute(addr.getAddress(), addr.getMask());
+                // "Kill-switch" semantics. allowFamily() is API 21+, so on KitKat the routes are
+                // still installed but the additional family restriction is unavailable.
+                if (supportsLollipopVpnBuilder && !(sawDefaultRoute && config.getPeers().size() == 1)) {
+                    builder.allowFamily(2);  // AF_INET
+                    builder.allowFamily(10); // AF_INET6
                 }
+
+                builder.setMtu(config.getInterface().getMtu().orElse(1280));
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                    builder.setMetered(false);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+                    service.setUnderlyingNetworks(null);
+
+                if (supportsLollipopVpnBuilder)
+                    builder.setBlocking(true);
+                try (final ParcelFileDescriptor tun = builder.establish()) {
+                    if (tun == null)
+                        throw new BackendException(Reason.TUN_CREATION_ERROR);
+                    Log.d(TAG, "Go backend " + awgVersion());
+                    if (!supportsLollipopVpnBuilder) {
+                        // API 19 has no VpnService.Builder.setBlocking(). The Go TUN reader expects
+                        // a blocking descriptor, so clear O_NONBLOCK with a small JNI helper.
+                        final int fd = tun.getFd();
+                        if (awgSetBlocking(fd) != 0)
+                            Log.w(TAG, "Unable to make TUN fd " + fd + " blocking");
+                    }
+                    currentTunnelHandle = awgTurnOn(tunnel.getName(), tun.detachFd(), goConfig);
+                }
+                if (currentTunnelHandle < 0)
+                    throw new BackendException(Reason.GO_ACTIVATION_ERROR_CODE, currentTunnelHandle);
+
+                currentTunnel = tunnel;
+                currentConfig = config;
+
+                service.protect(awgGetSocketV4(currentTunnelHandle));
+                service.protect(awgGetSocketV6(currentTunnelHandle));
+
+                launchStatusJob();
+            } catch (final Exception e) {
+                // Do not leave a "Connecting…" notification behind if activation failed.
+                stopStatusJob();
+                if (currentTunnelHandle != -1) {
+                    awgTurnOff(currentTunnelHandle);
+                    currentTunnelHandle = -1;
+                }
+                currentTunnel = null;
+                currentConfig = null;
+                updateVpnNotification(null);
+                throw e;
             }
-
-            // "Kill-switch" semantics
-            if (!(sawDefaultRoute && config.getPeers().size() == 1)) {
-                builder.allowFamily(OsConstants.AF_INET);
-                builder.allowFamily(OsConstants.AF_INET6);
-            }
-
-            builder.setMtu(config.getInterface().getMtu().orElse(1280));
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
-                builder.setMetered(false);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
-                service.setUnderlyingNetworks(null);
-
-            builder.setBlocking(true);
-            try (final ParcelFileDescriptor tun = builder.establish()) {
-                if (tun == null)
-                    throw new BackendException(Reason.TUN_CREATION_ERROR);
-                Log.d(TAG, "Go backend " + awgVersion());
-                currentTunnelHandle = awgTurnOn(tunnel.getName(), tun.detachFd(), goConfig);
-            }
-            if (currentTunnelHandle < 0)
-                throw new BackendException(Reason.GO_ACTIVATION_ERROR_CODE, currentTunnelHandle);
-
-            currentTunnel = tunnel;
-            currentConfig = config;
-
-            service.protect(awgGetSocketV4(currentTunnelHandle));
-            service.protect(awgGetSocketV6(currentTunnelHandle));
-
-            launchStatusJob();
         } else {
             if (currentTunnelHandle == -1) {
                 Log.w(TAG, "Tunnel already down");
+                updateVpnNotification(null);
                 return;
             }
             stopStatusJob();
@@ -468,6 +514,8 @@ public final class GoBackend implements Backend {
             currentTunnelHandle = -1;
             currentConfig = null;
             awgTurnOff(handleToClose);
+            updateVpnNotification(null);
+            currentVpnService = null;
             try {
                 vpnService.get(0, TimeUnit.NANOSECONDS).stopSelf();
             } catch (final TimeoutException ignored) { }
@@ -517,10 +565,70 @@ public final class GoBackend implements Backend {
      * {@link android.net.VpnService} implementation for {@link GoBackend}
      */
     public static class VpnService extends android.net.VpnService {
+        public static final int NOTIFICATION_ID = 0x415747;
+        private static final String NOTIFICATION_CHANNEL_ID = "amneziawg_tunnel_status";
         @Nullable private GoBackend owner;
 
         public Builder getBuilder() {
             return new Builder();
+        }
+
+        /**
+         * Build the ongoing foreground-service notification. This deliberately contains no action
+         * buttons: the Quick Settings tile / notification controls are out of scope for the legacy
+         * port, so the tunnel is controlled only from the app UI.
+         */
+        Notification buildNotification(final String text) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                ensureNotificationChannel();
+
+            final Notification.Builder builder;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                builder = new Notification.Builder(this, NOTIFICATION_CHANNEL_ID);
+            } else {
+                builder = new Notification.Builder(this);
+                builder.setPriority(Notification.PRIORITY_LOW);
+            }
+
+            builder.setSmallIcon(R.drawable.ic_notification)
+                    .setContentTitle(getString(R.string.tunnel_status_notification_title))
+                    .setContentText(text)
+                    .setOngoing(true)
+                    .setOnlyAlertOnce(true)
+                    .setShowWhen(false)
+                    .setAutoCancel(false);
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                builder.setCategory(Notification.CATEGORY_SERVICE);
+                builder.setVisibility(Notification.VISIBILITY_PRIVATE);
+            }
+
+            final Intent launchIntent = getPackageManager().getLaunchIntentForPackage(getPackageName());
+            if (launchIntent != null) {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+                    flags |= PendingIntent.FLAG_IMMUTABLE;
+                builder.setContentIntent(PendingIntent.getActivity(this, 0, launchIntent, flags));
+            }
+
+            return builder.build();
+        }
+
+        private void ensureNotificationChannel() {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O)
+                return;
+            final NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            if (manager == null || manager.getNotificationChannel(NOTIFICATION_CHANNEL_ID) != null)
+                return;
+            final NotificationChannel channel = new NotificationChannel(
+                    NOTIFICATION_CHANNEL_ID,
+                    getString(R.string.tunnel_status_notification_channel),
+                    NotificationManager.IMPORTANCE_LOW);
+            channel.setDescription(getString(R.string.tunnel_status_notification_channel_description));
+            channel.setShowBadge(false);
+            channel.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
+            manager.createNotificationChannel(channel);
         }
 
         @Override
@@ -531,6 +639,7 @@ public final class GoBackend implements Backend {
 
         @Override
         public void onDestroy() {
+            stopForeground(true);
             if (owner != null) {
                 final Tunnel tunnel = owner.currentTunnel;
                 if (tunnel != null) {
@@ -541,6 +650,7 @@ public final class GoBackend implements Backend {
                     owner.currentConfig = null;
                     tunnel.onStateChange(State.DOWN);
                 }
+                owner.currentVpnService = null;
             }
             vpnService = vpnService.newIncompleteFuture();
             super.onDestroy();

@@ -287,13 +287,17 @@ public final class Peer {
 
         /**
          * Sets the persistent keepalive from a string. Empty or {@code "off"} disables it
-         * (WireGuard compatibility); otherwise the trimmed value is stored as-is.
+         * (WireGuard compatibility). AmneziaWG also accepts a single interval or a range
+         * (for example {@code "25"} or {@code "22-30"}); anything else is invalid.
          */
         public Builder setPersistentKeepalive(final String persistentKeepalive)
                 throws BadConfigException {
             final String trimmed = persistentKeepalive.trim();
             if (trimmed.isEmpty() || trimmed.equalsIgnoreCase("off")) {
                 this.persistentKeepalive = Optional.empty();
+            } else if (!trimmed.matches("\\d+(?:-\\d+)?")) {
+                throw new BadConfigException(Section.PEER, Location.PERSISTENT_KEEPALIVE,
+                        Reason.INVALID_NUMBER, trimmed);
             } else {
                 this.persistentKeepalive = Optional.of(trimmed);
             }

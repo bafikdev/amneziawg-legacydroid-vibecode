@@ -4,6 +4,7 @@
  */
 
 #include <jni.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -68,4 +69,12 @@ JNIEXPORT jstring JNICALL Java_org_amnezia_awg_GoBackend_awgVersion(JNIEnv *env,
 	ret = (*env)->NewStringUTF(env, version);
 	free(version);
 	return ret;
+}
+
+JNIEXPORT jint JNICALL Java_org_amnezia_awg_GoBackend_awgSetBlocking(JNIEnv *env, jclass c, jint fd)
+{
+	int flags = fcntl(fd, F_GETFL);
+	if (flags < 0)
+		return -1;
+	return fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
 }

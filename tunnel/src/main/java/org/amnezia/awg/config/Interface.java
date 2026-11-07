@@ -14,6 +14,8 @@ import org.amnezia.awg.crypto.KeyPair;
 import org.amnezia.awg.util.NonNullForAll;
 
 import java.net.InetAddress;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashSet;
@@ -22,7 +24,6 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 import androidx.annotation.Nullable;
 
@@ -634,7 +635,10 @@ public final class Interface {
         if (!addresses.isEmpty())
             sb.append("Address = ").append(Attribute.join(addresses)).append('\n');
         if (!dnsServers.isEmpty()) {
-            final List<String> dnsServerStrings = dnsServers.stream().map(InetAddress::getHostAddress).collect(Collectors.toList());
+            // Avoid java.util.stream here: it is unavailable on API 19 without desugaring.
+            final List<String> dnsServerStrings = new ArrayList<>(dnsServers.size() + dnsSearchDomains.size());
+            for (final InetAddress address : dnsServers)
+                dnsServerStrings.add(address.getHostAddress());
             dnsServerStrings.addAll(dnsSearchDomains);
             sb.append("DNS = ").append(Attribute.join(dnsServerStrings)).append('\n');
         }
@@ -719,7 +723,7 @@ public final class Interface {
         if (value == null) {
             return "0";
         }
-        switch (value.trim().toLowerCase()) {
+        switch (value.trim().toLowerCase(Locale.ROOT)) {
             case "on":
             case "1":
             case "true":
@@ -888,11 +892,11 @@ public final class Interface {
         }
 
         public Builder parseExcludedApplications(final CharSequence apps) {
-            return excludeApplications(List.of(Attribute.split(apps)));
+            return excludeApplications(Arrays.asList(Attribute.split(apps)));
         }
 
         public Builder parseIncludedApplications(final CharSequence apps) {
-            return includeApplications(List.of(Attribute.split(apps)));
+            return includeApplications(Arrays.asList(Attribute.split(apps)));
         }
 
         public Builder parseListenPort(final String listenPort) throws BadConfigException {
