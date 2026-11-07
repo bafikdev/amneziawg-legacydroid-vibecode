@@ -4,14 +4,19 @@
  */
 package org.amnezia.awg.activity
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.addCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.ActionBar
+import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentManager
 import androidx.fragment.app.FragmentTransaction
 import androidx.fragment.app.commit
@@ -29,6 +34,17 @@ class MainActivity : BaseActivity(), FragmentManager.OnBackStackChangedListener 
     private var actionBar: ActionBar? = null
     private var isTwoPaneLayout = false
     private var backPressedCallback: OnBackPressedCallback? = null
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* optional */ }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            // The VPN still works when this is denied, but on Android 13+ the ongoing
+            // foreground notification would stay hidden from the notification drawer.
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 
     private fun handleBackPressed() {
         val backStackEntries = supportFragmentManager.backStackEntryCount
@@ -63,6 +79,7 @@ class MainActivity : BaseActivity(), FragmentManager.OnBackStackChangedListener 
         supportFragmentManager.addOnBackStackChangedListener(this)
         backPressedCallback = onBackPressedDispatcher.addCallback(this) { handleBackPressed() }
         onBackStackChanged()
+        requestNotificationPermissionIfNeeded()
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {

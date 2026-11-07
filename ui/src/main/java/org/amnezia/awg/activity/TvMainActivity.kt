@@ -21,6 +21,7 @@ import android.view.View
 import android.widget.Toast
 import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
@@ -266,17 +267,31 @@ class TvMainActivity : AppCompatActivity() {
     private suspend fun makeStorageRoots(): Collection<KeyedFile> = withContext(Dispatchers.IO) {
         cachedRoots?.let { return@withContext it }
         val list = HashSet<KeyedFile>()
-        val storageManager: StorageManager = getSystemService() ?: return@withContext list
-        list.addAll(storageManager.storageVolumes.mapNotNull { volume ->
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                volume.directory?.let { KeyedFile(it, volume.getDescription(this@TvMainActivity)) }
-            } else {
-                KeyedFile((StorageVolume::class.java.getMethod("getPathFile").invoke(volume) as File), volume.getDescription(this@TvMainActivity))
-            }
-        })
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            // StorageManager.getStorageVolumes() is API 24+. On KitKat/Lollipop the file
+            // browser works from the primary external storage directory.
+            val root = Environment.getExternalStorageDirectory()
+            if (root != null)
+                list.add(KeyedFile(root, getString(R.string.tv_internal_storage)))
+        } else {
+            val storageManager: StorageManager = getSystemService() ?: return@withContext list
+            list.addAll(makeStorageRootsModern(storageManager))
+        }
         cachedRoots = list
         list
     }
+
+    @RequiresApi(Build.VERSION_CODES.N)
+    private fun makeStorageRootsModern(storageManager: StorageManager): Collection<KeyedFile> =
+        storageManager.storageVolumes.mapNotNull { volume ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                volume.directory?.let { KeyedFile(it, volume.getDescription(this)) }
+            } else {
+                @Suppress("DiscouragedPrivateApi")
+                val path = StorageVolume::class.java.getMethod("getPathFile").invoke(volume) as File
+                KeyedFile(path, volume.getDescription(this))
+            }
+        }
 
     private fun isBelowCachedRoots(maybeChild: File): Boolean {
         val cachedRoots = cachedRoots ?: return true

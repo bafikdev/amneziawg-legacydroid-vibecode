@@ -21,6 +21,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
 import kotlinx.coroutines.delay
@@ -32,6 +33,7 @@ enum class NetworkType {
     NONE, WIFI, CELLULAR, OTHER
 }
 
+@RequiresApi(Build.VERSION_CODES.LOLLIPOP)
 class NetworkState(
     private val context: Context,
     private val onNetworkChange: (NetworkType, NetworkType) -> Unit

@@ -11,7 +11,6 @@ import com.google.zxing.NotFoundException
 import org.amnezia.awg.Application
 import org.amnezia.awg.R
 import org.amnezia.awg.backend.BackendException
-import org.amnezia.awg.util.RootShell.RootShellException
 import org.amnezia.awg.config.BadConfigException
 import org.amnezia.awg.config.InetEndpoint
 import org.amnezia.awg.config.InetNetwork
@@ -32,8 +31,6 @@ object ErrorMessages {
         BadConfigException.Reason.UNKNOWN_SECTION to R.string.bad_config_reason_unknown_section
     )
     private val BE_REASON_MAP = mapOf(
-        BackendException.Reason.UNKNOWN_KERNEL_MODULE_NAME to R.string.module_version_error,
-        BackendException.Reason.AWG_QUICK_CONFIG_ERROR_CODE to R.string.tunnel_config_error,
         BackendException.Reason.TUNNEL_MISSING_CONFIG to R.string.no_config_error,
         BackendException.Reason.VPN_NOT_AUTHORIZED to R.string.vpn_not_authorized_error,
         BackendException.Reason.UNABLE_TO_START_VPN to R.string.vpn_start_error,
@@ -56,15 +53,6 @@ object ErrorMessages {
         InetNetwork::class.java to R.string.parse_error_inet_network,
         Int::class.java to R.string.parse_error_integer
     )
-    private val RSE_REASON_MAP = mapOf(
-        RootShellException.Reason.NO_ROOT_ACCESS to R.string.error_root,
-        RootShellException.Reason.SHELL_MARKER_COUNT_ERROR to R.string.shell_marker_count_error,
-        RootShellException.Reason.SHELL_EXIT_STATUS_READ_ERROR to R.string.shell_exit_status_read_error,
-        RootShellException.Reason.SHELL_START_ERROR to R.string.shell_start_error,
-        RootShellException.Reason.CREATE_BIN_DIR_ERROR to R.string.create_bin_dir_error,
-        RootShellException.Reason.CREATE_TEMP_DIR_ERROR to R.string.create_temp_dir_error
-    )
-
     operator fun get(throwable: Throwable?): String {
         val resources = Application.get().resources
         if (throwable == null) return resources.getString(R.string.unknown_error)
@@ -83,10 +71,6 @@ object ErrorMessages {
 
             rootCause is BackendException -> {
                 resources.getString(BE_REASON_MAP.getValue(rootCause.reason), *rootCause.format)
-            }
-
-            rootCause is RootShellException -> {
-                resources.getString(RSE_REASON_MAP.getValue(rootCause.reason), *rootCause.format)
             }
 
             rootCause is NotFoundException -> {
@@ -146,9 +130,7 @@ object ErrorMessages {
     private fun rootCause(throwable: Throwable): Throwable {
         var cause = throwable
         while (cause.cause != null) {
-            if (cause is BadConfigException || cause is BackendException ||
-                cause is RootShellException
-            ) break
+            if (cause is BadConfigException || cause is BackendException) break
             val nextCause = cause.cause!!
             if (nextCause is RemoteException) break
             cause = nextCause

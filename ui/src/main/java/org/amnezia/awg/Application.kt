@@ -16,16 +16,14 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
+import androidx.multidex.MultiDexApplication
 import com.google.android.material.color.DynamicColors
 import org.amnezia.awg.backend.Backend
 import org.amnezia.awg.backend.GoBackend
-import org.amnezia.awg.backend.AwgQuickBackend
 import org.amnezia.awg.configStore.FileConfigStore
 import org.amnezia.awg.model.TunnelManager
 import org.amnezia.awg.util.NetworkState
 import org.amnezia.awg.util.NetworkType
-import org.amnezia.awg.util.RootShell
-import org.amnezia.awg.util.ToolsInstaller
 import org.amnezia.awg.util.UserKnobs
 import org.amnezia.awg.util.applicationScope
 import kotlinx.coroutines.CompletableDeferred
@@ -41,15 +39,13 @@ import kotlinx.coroutines.runBlocking
 import java.lang.ref.WeakReference
 import java.util.Locale
 
-class Application : android.app.Application() {
+class Application : MultiDexApplication() {
     private val futureBackend = CompletableDeferred<Backend>()
     private val coroutineScope = CoroutineScope(Job() + Dispatchers.Main.immediate)
     private var backend: Backend? = null
-    private lateinit var rootShell: RootShell
     private lateinit var preferencesDataStore: DataStore<Preferences>
-    private lateinit var toolsInstaller: ToolsInstaller
     private lateinit var tunnelManager: TunnelManager
-    private lateinit var networkState: NetworkState
+    private var networkState: NetworkState? = null
 
     override fun attachBaseContext(context: Context) {
         super.attachBaseContext(context)
@@ -64,33 +60,23 @@ class Application : android.app.Application() {
         }
     }
 
-    private suspend fun determineBackend(): Backend {
-        var backend: Backend? = null
-        if (UserKnobs.enableKernelModule.first() && AwgQuickBackend.hasKernelSupport()) {
-            try {
-                rootShell.start()
-                val awgQuickBackend = AwgQuickBackend(applicationContext, rootShell, toolsInstaller)
-                awgQuickBackend.setMultipleTunnels(UserKnobs.multipleTunnels.first())
-                backend = awgQuickBackend
-                UserKnobs.multipleTunnels.onEach {
-                    awgQuickBackend.setMultipleTunnels(it)
-                }.launchIn(coroutineScope)
-            } catch (ignored: Exception) {
-            }
+    /**
+     * На этом этапе порта единственный backend — userspace-реализация amneziawg-go.
+     * Root/kernel-путь (AwgQuickBackend) удалён: он требовал root, ядерный модуль
+     * и дополнительные native-библиотеки, несовместимые с задачей сборки под API 19.
+     */
+    private fun determineBackend(): Backend {
+        val goBackend = GoBackend(applicationContext)
+        GoBackend.setAlwaysOnCallback {
+            get().applicationScope.launch { get().tunnelManager.restoreState(true) }
         }
-        if (backend == null) {
-            backend = GoBackend(applicationContext)
-            GoBackend.setAlwaysOnCallback { get().applicationScope.launch { get().tunnelManager.restoreState(true) } }
-        }
-        return backend
+        return goBackend
     }
 
     override fun onCreate() {
         Log.i(TAG, USER_AGENT)
         super.onCreate()
         DynamicColors.applyToActivitiesIfAvailable(this)
-        rootShell = RootShell(applicationContext)
-        toolsInstaller = ToolsInstaller(applicationContext, rootShell)
         preferencesDataStore = PreferenceDataStoreFactory.create { applicationContext.preferencesDataStoreFile("settings") }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             runBlocking {
@@ -112,17 +98,22 @@ class Application : android.app.Application() {
         tunnelManager = TunnelManager(FileConfigStore(applicationContext))
         tunnelManager.onCreate()
 
-        // Initialize network state monitor for auto-reconnection
-        networkState = NetworkState(applicationContext) { oldType, newType ->
-            Log.i(TAG, "NetworkState callback: Network changed: $oldType -> $newType")
-            onNetworkChange(oldType, newType)
+        // ConnectivityManager.NetworkCallback and NetworkRequest are API 21+. On KitKat the app
+        // keeps working without the automatic reconnect-on-network-change helper; the Go device
+        // itself still re-resolves and roams when the underlying network changes.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            networkState = NetworkState(applicationContext) { oldType, newType ->
+                Log.i(TAG, "NetworkState callback: Network changed: $oldType -> $newType")
+                onNetworkChange(oldType, newType)
+            }
         }
 
         coroutineScope.launch(Dispatchers.IO) {
             try {
                 backend = determineBackend()
                 futureBackend.complete(backend!!)
-                networkState.bindNetworkListener()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP)
+                    networkState?.bindNetworkListener()
             } catch (e: Throwable) {
                 Log.e(TAG, Log.getStackTraceString(e))
             }
@@ -135,7 +126,8 @@ class Application : android.app.Application() {
     }
 
     override fun onTerminate() {
-        networkState.unbindNetworkListener()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP)
+            networkState?.unbindNetworkListener()
         coroutineScope.cancel()
         super.onTerminate()
     }
@@ -185,7 +177,16 @@ class Application : android.app.Application() {
     }
 
     companion object {
-        val USER_AGENT = String.format(Locale.ENGLISH, "AmneziaWG/%s (Android %d; %s; %s; %s %s; %s)", BuildConfig.VERSION_NAME, Build.VERSION.SDK_INT, if (Build.SUPPORTED_ABIS.isNotEmpty()) Build.SUPPORTED_ABIS[0] else "unknown ABI", Build.BOARD, Build.MANUFACTURER, Build.MODEL, Build.FINGERPRINT)
+        private val FIRST_ABI: String
+            get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                val abis = Build.SUPPORTED_ABIS
+                if (abis.isNotEmpty()) abis[0] else "unknown"
+            } else {
+                @Suppress("DEPRECATION")
+                Build.CPU_ABI ?: "unknown"
+            }
+
+        val USER_AGENT = String.format(Locale.ENGLISH, "AmneziaWG/%s (Android %d; %s; %s; %s %s; %s)", BuildConfig.VERSION_NAME, Build.VERSION.SDK_INT, FIRST_ABI, Build.BOARD, Build.MANUFACTURER, Build.MODEL, Build.FINGERPRINT)
         private const val TAG = "AmneziaWG/Application"
         private lateinit var weakSelf: WeakReference<Application>
 
@@ -195,17 +196,13 @@ class Application : android.app.Application() {
 
         suspend fun getBackend() = get().futureBackend.await()
 
-        fun getRootShell() = get().rootShell
-
         fun getPreferencesDataStore() = get().preferencesDataStore
-
-        fun getToolsInstaller() = get().toolsInstaller
 
         fun getTunnelManager() = get().tunnelManager
 
         fun getCoroutineScope() = get().coroutineScope
 
-        fun getNetworkState() = get().networkState
+        fun getNetworkState(): NetworkState? = get().networkState
     }
 
     init {

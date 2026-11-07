@@ -15,7 +15,6 @@ import org.amnezia.awg.model.ObservableTunnel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 /**
@@ -58,9 +57,8 @@ class TunnelStatusPreference(context: Context, attrs: AttributeSet?) : Preferenc
         }
     }
 
-    override fun onDetachedFromActivity() {
+    override fun onDetached() {
         subscribedTunnel?.removeOnPropertyChangedCallback(stateCallback)
-        scope.cancel()
-        super.onDetachedFromActivity()
+        super.onDetached()
     }
 }
