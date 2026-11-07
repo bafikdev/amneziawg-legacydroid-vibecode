@@ -3,9 +3,6 @@
 Порт Android-клиента [AmneziaWG](https://amnezia.org/learn-more/31_amneziawg) для Android 5 и выше 
 > так же поддерживает Android 4.4.4+, но требуется рутировать устройство и обновить сертификаты из за лимитов VpnService
 
-(KitKat, API 19). Туннель работает только в userspace через `amneziawg-go`; root и ядерный
-модуль не используются.
-
 ## Требования
 
 - JDK 17
